@@ -25,7 +25,7 @@ from Net.XFeat.modules.xfeat import XFeat
 
 from utils.general_utils import image_process
 
-from Net.Pose.posenetmlp import PoseNetMLP
+from Net.xfeat_pose_net import XFeatPoseNet
 
 
 
@@ -143,14 +143,14 @@ def pretraining(dataset: ModelParams):
     scene = Scene(dataset, load_iteration=15000)
     
     xfeat = XFeat(top_k=4096)
-    pose_regression_net = PoseRegressorMLP(in_dim=64).to(args.data_device)
-    posenetmlp = PoseNetMLP(pose_regression_net).to(args.data_device)
-    optimizer = torch.optim.Adam(posenetmlp.mlp.parameters(), lr=1e-4)
+
+    xfeat_posenet = XFeatPoseNet(feat_dim=64).to(args.data_device)
+    optimizer = torch.optim.Adam(xfeat_posenet.parameters(), lr=1e-4)
     
     viewpoint_stack = scene.getTrainCameras().copy()
 
     
-    num_iter = 15000
+    num_iter = 50
     
     progress_bar = tqdm(range(0, num_iter), desc="Training progress")
 
@@ -169,13 +169,12 @@ def pretraining(dataset: ModelParams):
             continue
         
         original_image = image_process(image)
-
-        gt_image = original_image.cuda()
-        gt_feature_map = xfeat.get_descriptors(gt_image[None])[0]
-        feature_map = F.interpolate(gt_feature_map.unsqueeze(0), size=(original_image.shape[1], original_image.shape[2]), mode='bilinear', align_corners=True) #640x480
-        #Regress Pose
         
-        tran, rot = posenetmlp(feature_map)
+        gt_image = original_image.cuda()
+        gt_feature_map = xfeat.get_descriptors(gt_image[None])
+        #Regress Pose
+        feat_map = gt_feature_map.clone()
+        tran, rot = xfeat_posenet(feat_map)
        
         gt_R = rotation_matrix_to_quaternion(torch.tensor(viewpoint_cam.R).unsqueeze(0))
         
@@ -197,7 +196,7 @@ def pretraining(dataset: ModelParams):
             training_report(tb_writer, loss, iteration)
     progress_bar.close()
     
-    torch.save(posenetmlp.mlp.state_dict(), "./weights/pretrain_poseregression.pth")
+    torch.save(xfeat_posenet.state_dict(), "./weights/pretrain_poseregression.pth")
 
     
 
