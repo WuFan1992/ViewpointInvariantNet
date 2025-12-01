@@ -80,7 +80,7 @@ class XFeatTransformerAggregator(nn.Module):
         """
         B, C, H, W = x.shape
 
-        # flatten spatial dims: (B, 64, H*W)
+        # flatten spatial dims: (B, 64, H*W) N=H*W
         x = x.reshape(B, C, H * W).transpose(1, 2)  # (B, N, C)
         # N = H*W tokens
 

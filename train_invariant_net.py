@@ -21,7 +21,7 @@ from arguments import ModelParams
 from PIL import Image
 
 from Net.XFeat.modules.xfeat import XFeat
-
+from Net.invariant_feat_net import InvariantFeatureNet
 
 from utils.general_utils import image_process
 
@@ -143,13 +143,20 @@ def pretraining(dataset: ModelParams):
     scene = Scene(dataset, load_iteration=15000)
     
     xfeat = XFeat(top_k=4096)
-
+    
+    invariant_net = InvariantFeatureNet(xfeat).to(args.data_device) 
     xfeat_posenet = XFeatPoseNet(feat_dim=64).to(args.data_device)
-    optimizer = torch.optim.Adam(xfeat_posenet.parameters(), lr=1e-4)
+    xfeat_posenet.load_state_dict(torch.load("./weights/pretrain_poseregression.pth", weights_only=True, map_location=args.data_device))
+        
+    
+    optimizer = torch.optim.Adam([
+    {"params": invariant_net.parameters(), "lr": 1e-4},
+    {"params": xfeat_posenet.parameters(), "lr": 5e-5},
+])
     
     viewpoint_stack = scene.getTrainCameras().copy()
 
-    num_iter = 8000
+    num_iter = 15000
     
     progress_bar = tqdm(range(0, num_iter), desc="Training progress")
 
@@ -173,15 +180,17 @@ def pretraining(dataset: ModelParams):
         gt_feature_map = xfeat.get_descriptors(gt_image[None])
         #Regress Pose
         feat_map = gt_feature_map.clone()
-        tran, rot = xfeat_posenet(feat_map)
-       
+        recon, invariant_map, adv_emd = invariant_net(feat_map)
+        tran, rot = xfeat_posenet(adv_emd)
+        
+        
         gt_R = rotation_matrix_to_quaternion(torch.tensor(viewpoint_cam.R).unsqueeze(0))
         
         gt_R, gt_t = gt_R.to(args.data_device), torch.tensor(viewpoint_cam.T).to(args.data_device).unsqueeze(0)
 
-        
-        loss, L_pos, L_rot = pose_loss(tran, rot, gt_t, gt_R)
-        
+        adv_loss, L_pos, L_rot = pose_loss(tran, rot, gt_t, gt_R)
+        recon_loss = F.mse_loss(recon, feat_map)
+        loss = recon_loss + 0.5*adv_loss
         optimizer.zero_grad()
         loss.backward()
         
@@ -211,7 +220,4 @@ if __name__ == "__main__":
     pretraining(model.extract(args))
 
  
- 
- 
- 
- 
+
